@@ -280,6 +280,15 @@ class Database:
                 VALUES (1, 0)
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS search_query_override (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    queries TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
             columns = {
                 row[1] for row in connection.execute("PRAGMA table_info(vacancies)")
             }
@@ -1077,6 +1086,40 @@ class Database:
                     (VacancyStatus.PENDING_APPROVAL.value,),
                 ).fetchall()
             ]
+
+    def search_query_override(self) -> list[str] | None:
+        """Переопределение hh.search_queries из БД; None — использовать список из profile.yaml.
+
+        Хранится одной строкой, запросы разделены переводом строки, чтобы
+        поддерживать запятые внутри самих запросов.
+        """
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT queries FROM search_query_override WHERE singleton = 1"
+            ).fetchone()
+        if row is None:
+            return None
+        queries = [
+            part.strip()
+            for part in row["queries"].split("\n")
+            if part.strip()
+        ]
+        return queries or None
+
+    def set_search_query_override(self, queries: list[str]) -> None:
+        """Сохранить список поисковых запросов в БД (переживает перезапуск процесса/контейнера)."""
+        joined = "\n".join(query.strip() for query in queries if query.strip())
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO search_query_override(singleton, queries)
+                VALUES (1, ?)
+                ON CONFLICT(singleton) DO UPDATE SET
+                    queries = excluded.queries,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (joined,),
+            )
 
     def stats(self) -> dict[str, int]:
         counts = {status.value: 0 for status in VacancyStatus}

@@ -91,7 +91,7 @@ class TelegramService:
     def authorized(self, user_id: int) -> bool:
         return user_id == self.settings.tg_user_id
 
-    def command(self, name: str, user_id: int) -> str:
+    def command(self, name: str, user_id: int, *, args: str = "") -> str:
         if not self.authorized(user_id):
             return PRIVATE_REPLY
         if name == "start":
@@ -154,7 +154,33 @@ class TelegramService:
             if self._edit_future and not self._edit_future.done():
                 self._edit_future.set_result(None)
             return "Current input request cancelled."
+        if name == "queries":
+            return self._queries_report(args)
         return "Unknown command."
+
+    def _queries_report(self, args: str) -> str:
+        if not args.strip():
+            override = self.database.search_query_override()
+            if override is not None:
+                queries = override
+                source = "сохранены через /queries"
+            else:
+                queries = list(self.settings.profile.hh.search_queries)
+                source = "из profile.yaml"
+            lines = [f"Текущие поисковые запросы ({source}):"]
+            lines.extend(f"{number}. {query}" for number, query in enumerate(queries, 1))
+            lines.append("")
+            lines.append("Замена: /queries <запрос 1, запрос 2, …>")
+            return "\n".join(lines)
+        queries = [part.strip() for part in args.split(",") if part.strip()]
+        if not queries:
+            return "Список запросов пуст. Пример: /queries Python, Go"
+        self.database.set_search_query_override(queries)
+        lines = ["Новые поисковые запросы сохранены:"]
+        lines.extend(f"{number}. {query}" for number, query in enumerate(queries, 1))
+        lines.append("")
+        lines.append("Применятся в следующем цикле поиска и сохранятся после перезапуска.")
+        return "\n".join(lines)
 
     def _diagnostics(self) -> str:
         run = self.database.latest_search_run()
@@ -214,6 +240,7 @@ class TelegramService:
             "pending",
             "stats",
             "diagnostics",
+            "queries",
             "mistral_keys",
             "keys",
             "cancel",
@@ -239,6 +266,16 @@ class TelegramService:
         if name == "cancel" and self._mistral_key_input is not None:
             self._mistral_key_input = None
             await message.answer("Current Mistral key input cancelled.")
+            return
+        if name == "queries":
+            parts = (message.text or "").split(maxsplit=1)
+            await message.answer(
+                self.command(
+                    "queries",
+                    message.from_user.id,
+                    args=parts[1] if len(parts) > 1 else "",
+                )
+            )
             return
         await message.answer(self.command(name, message.from_user.id))
 

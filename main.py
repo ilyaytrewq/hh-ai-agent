@@ -413,8 +413,16 @@ async def run_search_cycle(
     state = "completed"
     circuit_reason = ""
     failure: Exception | None = None
+    override = database.search_query_override()
+    search_queries = (
+        override
+        if override is not None
+        else list(settings.profile.hh.search_queries)
+    )
     logger.info(
-        "search_cycle_started queries=%s", len(settings.profile.hh.search_queries)
+        "search_cycle_started queries=%s override=%s",
+        len(search_queries),
+        override is not None,
     )
 
     async def process(summary: VacancySummary) -> None:
@@ -469,7 +477,7 @@ async def run_search_cycle(
                     vacancy.search_query,
                 )
             )
-        for query in settings.profile.hh.search_queries:
+        for query in search_queries:
             if control.paused or (
                 auto_apply_batch_limit is not None
                 and stats.auto_applications >= auto_apply_batch_limit
